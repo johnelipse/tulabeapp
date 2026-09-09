@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "400564190535",
+    "project_id": "tulabe-ea345",
+    "storage_bucket": "tulabe-ea345.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:400564190535:android:35058418cd8ed17701e062",
+        "android_client_info": {
+          "package_name": "com.example.tulabe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC9s8ZUXPTAEjEUvU1BI5wHPREenC5EgOo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
