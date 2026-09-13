@@ -6,10 +6,11 @@
 //   POST /api/push/subscribe   {"token": "...", "platform": "android"}   -> 200
 //   POST /api/push/unsubscribe {"token": "..."}                          -> 200
 //   POST /api/push/send        {"title": "...", "body": "...", "url": "..."} -> 200
-//   GET  /api/push/poll        (run one poll cycle now)                  -> 200
+//   GET  /POST /api/push/poll  (run one poll cycle now)                  -> 200
 //   GET  /api/push/health                                                    -> 200
 //
-// If RELAY_KEY is set, all mutation endpoints require header `X-Relay-Key`.
+// If RELAY_KEY is set, mutation endpoints require one of: X-Relay-Key (the
+// mobile app), X-API-Key, or Authorization: Bearer (cron-job.org headers).
 // If POLL_INTERVAL_MIN > 0 and TULABE_API_URL is set, the relay polls the
 // public Tulabe lists and broadcasts "new on Tulabe" notifications itself.
 // The poller also runs synchronously on `GET /api/push/poll`, which lets an
@@ -227,8 +228,23 @@ func (f *fcm) sendAll(ctx context.Context, store *tokenStore, title, body, link 
 func server(cfg config, store *tokenStore, f *fcm, p *poller) *http.ServeMux {
 	mux := http.NewServeMux()
 
+	// Accept the app's header (X-Relay-Key) plus the cron-job.org standard
+	// headers (X-API-Key / Authorization: Bearer) so one shared secret works
+	// for the mobile client and the external scheduler.
 	keyOK := func(r *http.Request) bool {
-		return cfg.relayKey == "" || r.Header.Get("X-Relay-Key") == cfg.relayKey
+		if cfg.relayKey == "" {
+			return true
+		}
+		if r.Header.Get("X-Relay-Key") == cfg.relayKey {
+			return true
+		}
+		if r.Header.Get("X-API-Key") == cfg.relayKey {
+			return true
+		}
+		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == cfg.relayKey {
+			return true
+		}
+		return false
 	}
 
 	readBody := func(r *http.Request, out any) error {
@@ -325,32 +341,39 @@ func server(cfg config, store *tokenStore, f *fcm, p *poller) *http.ServeMux {
 	})
 
 	// One synchronous poll cycle on demand so external crons can drive checks
-	// even when the platform has no always-on process. GET keeps it cron- and
-	// uptime-checker-friendly. Protected by RELAY_KEY when set.
+	// even when the platform has no always-on process. GET and POST both work
+	// (cron-job.org typically sends POST); protected by RELAY_KEY when set.
 	mux.HandleFunc("GET /api/push/poll", func(w http.ResponseWriter, r *http.Request) {
-		if !keyOK(r) {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad or missing X-Relay-Key"})
-			return
-		}
-		if cfg.pollMins <= 0 || cfg.tulabeAPI == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "poller not configured (set POLL_INTERVAL_MIN and TULABE_API_URL)"})
-			return
-		}
-		sent, pruned, name, link, err := p.check()
-		if err != nil {
-			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":       true,
-			"notified": sent,
-			"pruned":   pruned,
-			"title":    name,
-			"url":      link,
-		})
+		handlePoll(w, r, cfg, p, keyOK, writeJSON)
+	})
+	mux.HandleFunc("POST /api/push/poll", func(w http.ResponseWriter, r *http.Request) {
+		handlePoll(w, r, cfg, p, keyOK, writeJSON)
 	})
 
 	return mux
+}
+
+func handlePoll(w http.ResponseWriter, r *http.Request, cfg config, p *poller, keyOK func(*http.Request) bool, writeJSON func(http.ResponseWriter, int, any)) {
+	if !keyOK(r) {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad or missing X-Relay-Key"})
+		return
+	}
+	if cfg.pollMins <= 0 || cfg.tulabeAPI == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "poller not configured (set POLL_INTERVAL_MIN and TULABE_API_URL)"})
+		return
+	}
+	sent, pruned, name, link, err := p.check()
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       true,
+		"notified": sent,
+		"pruned":   pruned,
+		"title":    name,
+		"url":      link,
+	})
 }
 
 // ---- new-content poller (optional) ----
