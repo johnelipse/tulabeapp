@@ -211,8 +211,16 @@ func (f *fcm) sendAll(ctx context.Context, store *tokenStore, title, body, link 
 				continue
 			}
 			// Drop tokens FCM says are gone so we don't hammer them forever.
-			if strings.Contains(resp.Error.Error(), "registration-token-not-registered") {
+			// Match the admin SDK's FCM v1 code (NotRegistered / InvalidRegistration)
+			// as well as the legacy long form.
+			msg := strings.ToLower(resp.Error.Error())
+			if strings.Contains(msg, "registration-token-not-registered") ||
+				strings.Contains(msg, "notregistered") ||
+				strings.Contains(msg, "invalidregistration") ||
+				strings.Contains(msg, "unregistered") {
 				badTokens = append(badTokens, order[start+i])
+			} else {
+				log.Printf("send: token %q rejected: %v", redact(order[start+i]), resp.Error)
 			}
 		}
 	}
@@ -444,6 +452,14 @@ func str(m map[string]any, key string) string {
 		return fmt.Sprint(v)
 	}
 	return ""
+}
+
+// redact hides most of a device token so logs stay readable.
+func redact(token string) string {
+	if len(token) <= 8 {
+		return "***"
+	}
+	return token[:4] + "..." + token[len(token)-4:]
 }
 
 // poller runs the new-content check both on a timer and synchronously when an

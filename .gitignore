@@ -49,3 +49,10 @@ app.*.map.json
 
 #others
 .env/
+
+# Relay secrets / build artifacts (firebase service account, device tokens, local builds)
+relay/firebase-service-account.json
+relay/tulabe-ea345-firebase-adminsdk-fbsvc-fa55ff8b05.json
+relay/tokens.json
+relay/*.exe
+relay/*.exe~
