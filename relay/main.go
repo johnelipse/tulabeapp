@@ -6,11 +6,15 @@
 //   POST /api/push/subscribe   {"token": "...", "platform": "android"}   -> 200
 //   POST /api/push/unsubscribe {"token": "..."}                          -> 200
 //   POST /api/push/send        {"title": "...", "body": "...", "url": "..."} -> 200
+//   GET  /api/push/poll        (run one poll cycle now)                  -> 200
 //   GET  /api/push/health                                                    -> 200
 //
 // If RELAY_KEY is set, all mutation endpoints require header `X-Relay-Key`.
 // If POLL_INTERVAL_MIN > 0 and TULABE_API_URL is set, the relay polls the
 // public Tulabe lists and broadcasts "new on Tulabe" notifications itself.
+// The poller also runs synchronously on `GET /api/push/poll`, which lets an
+// external cron (e.g. cron-job.org) trigger checks even when the platform
+// freezes the in-process timer while the service is asleep.
 package main
 
 import (
@@ -220,7 +224,7 @@ func (f *fcm) sendAll(ctx context.Context, store *tokenStore, title, body, link 
 
 // ---- HTTP ----
 
-func server(cfg config, store *tokenStore, f *fcm) *http.ServeMux {
+func server(cfg config, store *tokenStore, f *fcm, p *poller) *http.ServeMux {
 	mux := http.NewServeMux()
 
 	keyOK := func(r *http.Request) bool {
@@ -306,7 +310,44 @@ func server(cfg config, store *tokenStore, f *fcm) *http.ServeMux {
 	})
 
 	mux.HandleFunc("GET /api/push/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "devices": store.count(), "fcmReady": f.ready()})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":       true,
+			"devices":  store.count(),
+			"fcmReady": f.ready(),
+			"poller": map[string]any{
+				"enabled":      cfg.pollMins > 0 && cfg.tulabeAPI != "",
+				"intervalMin":  cfg.pollMins,
+				"tulabeAPI":    cfg.tulabeAPI,
+				"lastCursor":   p.loadCursor(),
+				"pollEndpoint": "/api/push/poll",
+			},
+		})
+	})
+
+	// One synchronous poll cycle on demand so external crons can drive checks
+	// even when the platform has no always-on process. GET keeps it cron- and
+	// uptime-checker-friendly. Protected by RELAY_KEY when set.
+	mux.HandleFunc("GET /api/push/poll", func(w http.ResponseWriter, r *http.Request) {
+		if !keyOK(r) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "bad or missing X-Relay-Key"})
+			return
+		}
+		if cfg.pollMins <= 0 || cfg.tulabeAPI == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "poller not configured (set POLL_INTERVAL_MIN and TULABE_API_URL)"})
+			return
+		}
+		sent, pruned, name, link, err := p.check()
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":       true,
+			"notified": sent,
+			"pruned":   pruned,
+			"title":    name,
+			"url":      link,
+		})
 	})
 
 	return mux
@@ -339,14 +380,22 @@ func listNewest(cfg config) (cursor, title, id, kind string, err error) {
 			continue
 		}
 		var envelope struct {
-			Data map[string][]map[string]any `json:"data"`
+			Data map[string]json.RawMessage `json:"data"`
 		}
 		err = json.NewDecoder(resp.Body).Decode(&envelope)
 		resp.Body.Close()
 		if err != nil {
 			continue
 		}
-		for _, raw := range envelope.Data[l.key] {
+		raw, ok := envelope.Data[l.key]
+		if !ok {
+			continue
+		}
+		var items []map[string]any
+		if err := json.Unmarshal(raw, &items); err != nil {
+			continue
+		}
+		for _, raw := range items {
 			createdAt, _ := raw["created_at"].(string)
 			if createdAt == "" {
 				continue
@@ -374,59 +423,83 @@ func str(m map[string]any, key string) string {
 	return ""
 }
 
-func runPoller(ctx context.Context, cfg config, store *tokenStore, f *fcm) {
-	loadCursor := func() string {
-		data, err := os.ReadFile(cfg.lastCursorFile)
-		if err != nil {
-			return ""
-		}
-		return strings.TrimSpace(string(data))
+// poller runs the new-content check both on a timer and synchronously when an
+// external cron pings /api/push/poll. A mutex keeps the two from double-firing.
+type poller struct {
+	cfg   config
+	store *tokenStore
+	f     *fcm
+	mu    sync.Mutex
+}
+
+func newPoller(cfg config, store *tokenStore, f *fcm) *poller {
+	return &poller{cfg: cfg, store: store, f: f}
+}
+
+func (p *poller) loadCursor() string {
+	data, err := os.ReadFile(p.cfg.lastCursorFile)
+	if err != nil {
+		return ""
 	}
-	saveCursor := func(c string) {
-		_ = os.WriteFile(cfg.lastCursorFile, []byte(c), 0o600)
+	return strings.TrimSpace(string(data))
+}
+
+func (p *poller) saveCursor(c string) {
+	_ = os.WriteFile(p.cfg.lastCursorFile, []byte(c), 0o600)
+}
+
+// check performs one poll cycle and returns a concise result payload for the
+// HTTP handler. Safe to call concurrently with the timer goroutine.
+func (p *poller) check() (sent, pruned int, title, link string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	cursor := p.loadCursor()
+	newCursor, name, id, kind, err := listNewest(p.cfg)
+	if err != nil {
+		return 0, 0, "", "", err
 	}
 
-	cursor := loadCursor()
-	bootstrapped := cursor != ""
-	ticker := time.NewTicker(time.Duration(cfg.pollMins) * time.Minute)
+	if cursor == "" {
+		// First run (fresh deploy or wiped volume): adopt the current newest
+		// as the baseline so we never spam the backlog.
+		p.saveCursor(newCursor)
+		return 0, 0, name, "", nil
+	}
+
+	if newCursor <= cursor {
+		return 0, 0, "", "", nil
+	}
+
+	subject := name
+	if subject == "" {
+		subject = "New on Tulabe"
+	}
+	link = fmt.Sprintf("%s/%s/%s", p.cfg.tulabeWebURL, kind, id)
+	sent, pruned, err = p.f.sendAll(context.Background(), p.store, subject,
+		"Now streaming on Tulabe.", link)
+	if err != nil {
+		return 0, 0, name, link, err
+	}
+	p.saveCursor(newCursor)
+	return sent, pruned, name, link, nil
+}
+
+// loop is the in-process timer. It is best-effort: on platforms that freeze
+// the process while idle, external crons trigger check() via the HTTP handler.
+func (p *poller) loop(ctx context.Context) {
+	ticker := time.NewTicker(time.Duration(p.cfg.pollMins) * time.Minute)
 	defer ticker.Stop()
-
-	log.Printf("poller: every %dm against %s (cursor %q)", cfg.pollMins, cfg.tulabeAPI, cursor)
-
+	log.Printf("poller: every %dm against %s (cursor %q)", p.cfg.pollMins, p.cfg.tulabeAPI, p.loadCursor())
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			newCursor, name, id, kind, err := listNewest(cfg)
-			if err != nil {
+			if sent, pruned, name, _, err := p.check(); err != nil {
 				log.Printf("poller: %v", err)
-				continue
-			}
-			if !bootstrapped {
-				// First run: remember where we are so we don't spam the backlog.
-				bootstrapped = true
-				cursor = newCursor
-				saveCursor(cursor)
-				log.Printf("poller: baseline set at %s", cursor)
-				continue
-			}
-			if newCursor > cursor {
-				log.Printf("poller: new content %q (%s)", name, newCursor)
-				subject := name
-				if subject == "" {
-					subject = "New on Tulabe"
-				}
-				sent, pruned, err := f.sendAll(ctx, store, subject,
-					"Now streaming on Tulabe.",
-					fmt.Sprintf("%s/%s/%s", cfg.tulabeWebURL, kind, id))
-				if err != nil {
-					log.Printf("poller: send failed: %v", err)
-					continue
-				}
-				cursor = newCursor
-				saveCursor(cursor)
-				log.Printf("poller: sent=%d pruned=%d", sent, pruned)
+			} else if sent > 0 {
+				log.Printf("poller: notified %d device(s) about %q (pruned %d)", sent, name, pruned)
 			}
 		}
 	}
@@ -440,12 +513,13 @@ func main() {
 		log.Fatalf("tokens store: %v", err)
 	}
 	f := newFCM(cfg)
-	mux := server(cfg, store, f)
+	p := newPoller(cfg, store, f)
+	mux := server(cfg, store, f, p)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if cfg.pollMins > 0 && cfg.tulabeAPI != "" {
-		go runPoller(ctx, cfg, store, f)
+		go p.loop(ctx)
 	} else {
 		log.Printf("poller: disabled (set POLL_INTERVAL_MIN + TULABE_API_URL to enable)")
 	}
