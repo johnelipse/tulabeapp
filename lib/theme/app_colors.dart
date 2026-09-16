@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Centralized color palette for the Tulabe app.
-/// Matches the web version at tulabe.lectify.education.
+/// Matches the web version at tulabefilm.com.
 class AppColors {
   AppColors._();
 

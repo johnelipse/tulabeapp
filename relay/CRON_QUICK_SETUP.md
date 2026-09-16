@@ -46,10 +46,18 @@ LEAVE `RELAY_KEY` EMPTY for now if you are not going to set it on Render.
 | Title | Tulabe push poll |
 | URL | `https://apprelay-bg2i.onrender.com/api/push/poll` |
 | Method | POST |
-| Schedule | Every 15 minutes (`*/15 * * * *`) |
+| Schedule | Every 5 minutes (`*/5 * * * *`) |
 | Timeout | 30 seconds |
 | Headers | `X-API-Key: <your RELAY_KEY>` (only if RELAY_KEY is set) |
 | Notify on failure | Yes |
+
+> **Use `*/5 * * * *` (not `*/15`).** Render's free tier sleeps after ~15 min
+> idle. A `*/15` job hits right at the sleep boundary, so the relay is usually
+> cold-starting: Render answers with a large HTML cold-start/error page while
+> your app boots, and cron-job.org caps responses at 8 KB — the job then shows
+> `Failed (output too large)` even though your endpoint itself returns a tiny
+> JSON. A 5-minute cadence keeps the service warm so it never sleeps and every
+> run returns the small JSON response.
 
 3. Save, then click **Execute now** to test. A green `200 {"ok":true,...}`
    response confirms the relay is reachable and the poll ran.
@@ -66,5 +74,10 @@ LEAVE `RELAY_KEY` EMPTY for now if you are not going to set it on Render.
 
 - First poll after the relay (re)deploys or its volume is wiped sets a baseline
   and does NOT notify about already-existing content (no backlog spam).
-- Free tier allows up to 3 cron jobs; 15-minute cadence is plenty for new-title
-  alerts.
+- Free tier allows up to 3 cron jobs; 5-minute cadence is plenty for new-title
+  alerts and also keeps the service awake so the job never cold-starts.
+- Device tokens are stored in a plain file on Render's **ephemeral** disk. Any
+  cold start / redeploy wipes them, so after a deploy or a long idle period the
+  phone must open the app once to re-register. Acceptable for a hobby service,
+  but if this ever needs to be production-grade, move tokens + cursor into a
+  tiny managed store (e.g. a free Postgres/Upstash instance).
