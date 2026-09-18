@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:tulabe/controllers/auth_controller.dart';
 import 'package:tulabe/controllers/home_controller.dart';
+import 'package:tulabe/controllers/push_controller.dart';
 import 'package:tulabe/controllers/watch_progress_store.dart';
 import 'package:tulabe/models/movies.dart';
 import 'package:tulabe/my_widgets/bottom_nav_bar.dart';
@@ -49,6 +50,63 @@ class _HomeScreenState extends State<HomeScreen> {
     SeriesScreen(),
     PlaylistsScreen(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybePromptNotifications());
+  }
+
+  Future<void> _maybePromptNotifications() async {
+    final push = PushController.instance;
+    if (!await push.shouldShowPermissionPrompt()) return;
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'Enable Notifications',
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+        ),
+        content: const Text(
+          'Get alerted when new movies and series land on Tulabe.',
+          style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        actions: [
+          TextButton(
+            onPressed: () {
+              push.markPermissionPromptSeen();
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Maybe Later', style: TextStyle(color: Colors.white54)),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.primary),
+            onPressed: () async {
+              Navigator.of(ctx).pop();
+              final ok = await push.setEnabled(true);
+              if (!ok && mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text(
+                    PushController.instance.error ?? 'Could not enable notifications',
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                  backgroundColor: Colors.black87,
+                  duration: const Duration(seconds: 3),
+                ));
+              }
+            },
+            child: const Text('Allow', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+    push.markPermissionPromptSeen();
+  }
 
   @override
   Widget build(BuildContext context) {

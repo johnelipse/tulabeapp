@@ -38,6 +38,7 @@ class PushController extends ChangeNotifier {
 
   bool _enabled = false;
   bool _busy = false;
+  bool _prompted = false;
   String? _error;
   bool _initialized = false;
   StreamSubscription<RemoteMessage>? _onMessageSub;
@@ -84,6 +85,27 @@ class PushController extends ChangeNotifier {
       unawaited(_enable());
     }
   }
+
+  /// Whether the app should surface the "allow notifications" prompt on the
+  /// next open: notifications are not already on and the OS permission has not
+  /// been granted yet. Idempotent per process — after the user answers, it
+  /// won't nag again within the same session.
+  Future<bool> shouldShowPermissionPrompt() async {
+    if (_prompted) return false;
+    if (_enabled) return false;
+    try {
+      final settings = await _messaging.getNotificationSettings();
+      final status = settings.authorizationStatus;
+      return status != AuthorizationStatus.authorized &&
+          status != AuthorizationStatus.provisional;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Marks the permission prompt as answered for this process so it doesn't
+  /// pop up repeatedly while the app is open.
+  void markPermissionPromptSeen() => _prompted = true;
 
   /// Turns the notification toggle on/off and pushes the change to the API.
   /// Returns the new enabled state (false when permission is denied/revoked).
