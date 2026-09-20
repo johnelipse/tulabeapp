@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tulabe/controllers/playback_controller.dart';
 import 'package:tulabe/controllers/watch_progress_store.dart';
 import 'package:tulabe/models/movies.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../theme/app_colors.dart';
 
@@ -38,6 +39,10 @@ class InlinePlayer extends StatefulWidget {
   /// progress store link the entry back to its series page for resume.
   final String? seriesId;
 
+  /// Called when playback reaches the end. Used by the series screen to
+  /// auto-play the next episode.
+  final VoidCallback? onFinished;
+
   const InlinePlayer({
     super.key,
     required this.movieId,
@@ -45,6 +50,7 @@ class InlinePlayer extends StatefulWidget {
     this.thumbnailUrl,
     this.resumeFrom = 0,
     this.seriesId,
+    this.onFinished,
   });
 
   @override
@@ -147,6 +153,7 @@ class InlinePlayerState extends State<InlinePlayer> {
     _stopWatchdog();
     _saveProgress();
     _disposePlayer();
+    WakelockPlus.disable();
     _playback.dispose();
     _fitValue.dispose();
     _controlsVisible.dispose();
@@ -319,19 +326,23 @@ class InlinePlayerState extends State<InlinePlayer> {
         _applyPendingSeek();
         break;
       case PlayerEventType.play:
+        WakelockPlus.enable();
         if (mounted && !_started) {
           _started = true;
           _stopWatchdog();
         }
         break;
       case PlayerEventType.finished:
+        WakelockPlus.disable();
         if (mounted) {
           _started = true;
           _stopWatchdog();
         }
         _saveProgress();
+        widget.onFinished?.call();
         break;
       case PlayerEventType.pause:
+        WakelockPlus.disable();
         _saveProgress();
         break;
       case PlayerEventType.progress:

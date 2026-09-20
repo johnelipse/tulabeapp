@@ -121,6 +121,24 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
 
   void _play(Episode ep, Series series) => _playEpisode(ep, series);
 
+  /// When the current episode finishes, start the next one (across seasons),
+  /// matching the web player's mobile UX. Only fires automatically between
+  /// episodes of the same series.
+  void _onEpisodeFinished() {
+    final all = _controller.allEpisodes;
+    if (_activeEpisodeId == null || all.isEmpty) return;
+    final index = all.indexWhere((e) => e.streamMovieId == _activeEpisodeId);
+    if (index < 0 || index + 1 >= all.length) return;
+    final next = all[index + 1];
+    if (next.streamMovieId.isEmpty) return;
+    // The player widget swaps to the next episode's source; the player is
+    // already mounted, so start it on the next frame.
+    setState(() => _activeEpisodeId = next.streamMovieId);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _playerKey.currentState?.start();
+    });
+  }
+
   void _toast(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -232,6 +250,7 @@ class _SeriesDetailScreenState extends State<SeriesDetailScreen> {
                   thumbnailUrl: banner,
                   resumeFrom: widget.resumeFrom,
                   seriesId: '${series.id}',
+                  onFinished: _onEpisodeFinished,
                 )
               else
                 _posterBanner(banner, firstPlayable, series),
