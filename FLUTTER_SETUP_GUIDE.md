@@ -22,6 +22,7 @@
    - [On Windows](#on-windows)
    - [On macOS](#on-macos)
    - [On Linux](#on-linux)
+   - [The no-Android-Studio route (real phone only)](#the-no-android-studio-route-real-phone-only)
 3. [Step 2 — Verify Everything with `flutter doctor`](#3-step-2--verify-everything-with-flutter-doctor)
 4. [Step 3 — Install an Editor (VS Code or Android Studio)](#4-step-3--install-an-editor-vs-code-or-android-studio)
 5. [Step 4 — Set Up Where Your App Will Run](#5-step-4--set-up-where-your-app-will-run)
@@ -66,13 +67,18 @@ all from the same code.
 
 ### What you need to download (all free)
 1. **Flutter SDK** (the toolkit itself).
-2. **Android Studio** (provides the Android SDK + virtual phone). Lightest path is the Android **Command-line tools** only, but Android Studio is recommended for beginners.
+2. **Either**: the full **Android Studio** (provides the Android SDK + a virtual
+   phone, recommended for beginners) **or** — if you do *not* want to install
+   it and you have a real Android phone — just the Android **Command-line
+   tools** (see *The no-Android-Studio route* below).
 3. **An editor**: **Visual Studio Code** (light and simple) *or* Android Studio (all-in-one).
 4. **Git** (a tool for downloading code packages; Flutter uses it internally).
 
 > **A note on phones:** you do *not* need a phone to start. Flutter can run your
 > app in a virtual phone (emulator) on your computer, or right in a web browser.
-> A real phone is only needed for **Step 10**.
+> A real phone is only needed for **Step 10** — *unless* you choose the
+> no-Android-Studio route below, in which case your real phone IS the device you
+> run on for every step.
 
 ---
 
@@ -251,6 +257,107 @@ flutter config --enable-linux-desktop
 ```
 
 > **You're done with Linux.** Jump to [Step 2 Verification](#3-step-2--verify-everything-with-flutter-doctor).
+
+---
+
+### The no-Android-Studio route (real phone only)
+
+**Good news: you do NOT have to install the multi-gigabyte Android Studio.**
+If you are only ever going to run your app on **your own real Android phone**
+(no emulator, no Play Store release), you need only:
+
+1. **Flutter SDK** (already installed above).
+2. **Java** (a JDK — Flutter's Android build tools require it; version 17+).
+3. The lightweight Android **Command-line tools** (they give Flutter just the
+   parts of the Android SDK it needs: platform tools, build tools, `adb`).
+4. **Your Android phone** connected by USB (the device you'll run the app on).
+
+That's it — no Android Studio, no two-gigabyte IDE, no emulator.
+
+#### How to set it up
+
+##### Step A — Install a Java JDK
+- **Windows/macOS/Linux:** download the latest **JDK 17 LTS** (a free one such
+  as **Temurin** from <https://adoptium.net>) and install it with the defaults.
+- Verify it works in a new terminal:
+  ```bash
+  java -version
+  ```
+  You should see a version line ending in `17.x.x` (or newer).
+- On Windows set the `JAVA_HOME` environment variable to the JDK folder
+  (e.g. `C:\Program Files\Eclipse Adoptium\jdk-17...\`), same way you added
+  Flutter to PATH in [Step 1](#on-windows). On macOS/Linux this is usually
+  handled by the installer.
+
+##### Step B — Install only the Android Command-line tools
+The official "command line tools only" package is a small zip (the SDK
+contents are downloaded later when needed):
+
+- Download it from: <https://developer.android.com/studio#command-line-tools-only>
+  (scroll down to "Command line tools only", pick the archive for your OS).
+- Unzip it so the `cmdline-tools` folder is placed at a stable path, for
+  example:
+  - Windows: `C:\Android\cmdline-tools`
+  - macOS/Linux: `~/android-sdk/cmdline-tools`
+- The layout matters: move the contents so there is a
+  `cmdline-tools/latest/bin/` folder inside (the tools expect this).
+  On Windows that means after unzipping you typically end up with
+  `cmdline-tools\latest\bin\sdkmanager.bat`.
+
+##### Step C — Point Flutter at the SDK and install the pieces it needs
+Tell Flutter where your Android SDK lives, then let the SDK manager install
+platform-tools (contains `adb`, needed to talk to your phone) and the build
+tools. In a terminal:
+
+- Windows:
+  ```powershell
+  flutter config --android-sdk C:\Android\cmdline-tools\latest
+  C:\Android\cmdline-tools\latest\bin\sdkmanager.bat "platform-tools" "build-tools;34.0.0" "platforms;android-34"
+  ```
+- macOS/Linux:
+  ```bash
+  flutter config --android-sdk ~/android-sdk/cmdline-tools/latest
+  ~/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
+  ```
+  (If `sdkmanager` says a license needs accepting, answer `y`.)
+
+##### Step D — Accept the licenses
+```bash
+flutter doctor --android-licenses
+```
+Answer `y` to everything.
+
+##### Step E — Verify with `flutter doctor`
+```bash
+flutter doctor
+```
+You now want to see `[✓] Android toolchain` WITHOUT needing an
+`Android Studio` entry. An `[x] Android Studio` line is fine to ignore — you
+deliberately didn't install it. (On Windows you may also see a warning about
+Visual Studio for *Windows desktop* apps — ignore it, you're targeting your
+phone.)
+
+##### Step F — Connect your phone and run
+Follow the "real phone" steps in
+[Section 5](#android-a-real-phone-usb-or-wireless): enable **Developer
+options**, turn on **USB debugging**, plug the phone in, allow the connection
+when prompted, then:
+
+```bash
+flutter devices        # your phone should appear
+flutter run            # builds and installs your app straight onto the phone
+```
+
+Every `flutter run` you do will install the app onto the phone automatically.
+To create a standalone installable file (a `.apk` you can share), see
+[Step 9](#10-step-9--build-a-release-version-people-can-download) — that works
+the same way without Android Studio.
+
+**One honest caveat:** release builds and app-store publishing (Step 11)
+usually involve signing, screen-ratio/graphics checking, and store tools that
+are easier with Android Studio present. For *learning, personal apps, and
+sharing with friends*, the command-line route above is completely enough and
+saves you gigabytes of disk space.
 
 ---
 
