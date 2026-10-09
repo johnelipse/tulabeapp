@@ -305,18 +305,20 @@ contents are downloaded later when needed):
   `cmdline-tools\latest\bin\sdkmanager.bat`.
 
 ##### Step C — Point Flutter at the SDK and install the pieces it needs
-Tell Flutter where your Android SDK lives, then let the SDK manager install
-platform-tools (contains `adb`, needed to talk to your phone) and the build
-tools. In a terminal:
+Tell Flutter where your Android SDK **root** lives (the folder that will
+contain `platform-tools`, `platforms`, and `build-tools` as siblings of
+`cmdline-tools`), then let the SDK manager install platform-tools (contains
+`adb`, needed to talk to your phone) and the build tools. In a terminal,
+replacing `<your-sdk-root>` with the parent folder of `cmdline-tools`:
 
-- Windows:
+- Windows (SDK root = `C:\Android` if you unzipped there):
   ```powershell
-  flutter config --android-sdk C:\Android\cmdline-tools\latest
+  flutter config --android-sdk C:\Android
   C:\Android\cmdline-tools\latest\bin\sdkmanager.bat "platform-tools" "build-tools;34.0.0" "platforms;android-34"
   ```
-- macOS/Linux:
+- macOS/Linux (SDK root = `~/android-sdk`):
   ```bash
-  flutter config --android-sdk ~/android-sdk/cmdline-tools/latest
+  flutter config --android-sdk ~/android-sdk
   ~/android-sdk/cmdline-tools/latest/bin/sdkmanager "platform-tools" "build-tools;34.0.0" "platforms;android-34"
   ```
   (If `sdkmanager` says a license needs accepting, answer `y`.)
@@ -788,16 +790,29 @@ Apple *TestFlight*) so you can hand your app to testers before going public.
 | Problem | Likely cause / fix |
 |---|---|
 | `'flutter' is not recognized` | Flutter's `bin` isn't on PATH, or terminal wasn't reopened. Recheck Step 2 PATH. |
-| `flutter doctor` shows missing cmdline-tools | In Android Studio: **Settings → Android SDK → SDK Tools** → enable **Command-line Tools**. |
+| `flutter doctor` shows missing cmdline-tools | In Android Studio: **Settings → Android SDK → SDK Tools** → enable **Command-line Tools**; for the no-Android-Studio route, re-run the `sdkmanager` step in the route's Step C. |
 | License errors during Android build | Run `flutter doctor --android-licenses` and accept all. |
 | "No connected devices" | Run `flutter devices`. Emulator must be booted; phone must have **USB debugging** on and show up in the OS device list. |
 | Very slow first build | Normal — first build compiles all native code. Later builds are fast. |
 | App installs but crashes immediately | Usually a debug-only device (e.g. one without Play protections). Reinstall via release build (`flutter build apk --release`) or `adb install`. |
 | `adb` doesn't see the phone | Try another USB cable/port, switch phone USB mode to *File transfer*, install manufacturer USB driver (Windows), or use wireless debugging. |
 | Gradle/Java errors on Windows | Install a JDK 17 and set `JAVA_HOME`; or in Android Studio use **File → Project Structure → SDK location** to point at the bundled JDK. |
+| `JAVA_HOME is not set` / `Command PhaseScriptExecution` Java not found | The JDK (no-Android-Studio route) wasn't installed or `JAVA_HOME` points at nothing. Reinstall the **JDK 17+** (e.g. Temurin) and set `JAVA_HOME` to its folder, then reopen the terminal. |
+| `sdkmanager` is not recognized | On Windows the batch file is `sdkmanager.bat` inside `cmdline-tools\latest\bin\`; make sure you unzipped into the `...\cmdline-tools\latest\` layout exactly as in Step C, then use the full path. |
+| `sdkmanager` prints "Failed to find package..." | The package name must be exact, e.g. `"platform-tools"`, `"platforms;android-34"`, `"build-tools;34.0.0"`. List available packages with `sdkmanager --list` and pick an existing version. |
+| `Android SDK not found` despite installing tools | You forgot `flutter config --android-sdk <sdk-root>`. Point Flutter at the SDK **root** — the folder that will *contain* `platform-tools` (the parent of `cmdline-tools`), not `cmdline-tools` itself — see the route's Step C. |
+| `Error: License for package Android SDK ... not accepted` | Run `sdkmanager --licenses` (or `flutter doctor --android-licenses`) and answer `y`. |
+| `Failed to build / A problem occurred configuring project ':app'` | Usually a missing SDK component or license. Run `sdkmanager --list` to confirm `platforms;android-34` and a `build-tools` version are installed, then accept licenses and retry. |
+| `Dart / Gradle` gives a huge stack trace with "Could not resolve..." | A network proxy/VPN is blocking downloads. Make sure the connection is normal, then re-run in the project folder: `flutter pub get` and `flutter build apk --release`. |
+| Build finished but no `.apk` file | Release APK lives at `build\app\outputs\flutter-apk\app-release.apk` (Windows) or `build/app/outputs/flutter-apk/app-release.apk` (macOS/Linux). Debug builds live under `build/app/outputs/flutter-apk/app-debug.apk`. |
+| `adb` asks for authorization every time | Replug, tick "**Always allow from this computer**" on the phone's *Allow USB debugging?* dialog. |
+| Phone shows "unauthorized" in `flutter devices` | The phone is connected but you haven't accepted the debugging prompt on the phone screen. Unlock the phone, tap Allow, and run `flutter devices` again. |
+| "You must install Android SDK 34" / "compileSdk" error | The project's Gradle build wants a newer SDK platform. Install it: `sdkmanager "platforms;android-3X"` (matching the version it asks for, look in `android/app/build.gradle.kts`) and **build-tools**. |
 | CocoaPods errors on macOS | `sudo gem install cocoapods` or `brew install cocoapods`; then `cd ios && pod install`. |
 | "Signing certificate not found" (macOS/iPhone) | In Xcode: **Runner → Signing & Capabilities → Team** — add your free Apple ID account and select it. |
 | Hot reload doesn't change anything | Don't use hot reload for `pubspec.yaml`, `main()`, new files at the top level, or native code. Press `R` (hot restart) instead. |
+| APK file won't open/install on the phone | "Install unknown apps" is blocked for your file manager/browser. In phone Settings, search **Install unknown apps** and allow that app, then tap the APK again. |
+| "App not installed" when updating an app | The new APK was signed differently from the installed one. Uninstall the old app on the phone first, then install the new APK. |
 | Play Store rejects the upload | Make sure you uploaded the **.aab** (not .apk), it's **signed**, and versionCode/name are set and unique. |
 
 ---
